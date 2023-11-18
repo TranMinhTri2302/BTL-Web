@@ -115,7 +115,7 @@
 // Payment
     Route::get('payment', [PayPalController::class, 'payment'])->name('payment');
     Route::get('cancel', [PayPalController::class, 'cancel'])->name('payment.cancel');
-    Route::get('payment/success', [PayPalController::class, 'success'])->name('payment.success');
+    Route::get('payment/success/{id}', [PayPalController::class, 'success'])->name('payment.success');
 
 
 // Backend section start

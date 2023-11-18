@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Product;
 use Illuminate\Http\Request;
 use App\Models\Cart;
 use App\Models\Order;
@@ -40,7 +41,7 @@ class OrderController extends Controller
      * Store a newly created resource in storage.
      *
      * @param  \Illuminate\Http\Request  $request
-     * @return \Illuminate\Http\Response
+     * @return \Illuminate\Http\RedirectResponse
      */
     public function store(Request $request)
     {
@@ -52,7 +53,9 @@ class OrderController extends Controller
             'coupon'=>'nullable|numeric',
             'phone'=>'numeric|required',
             'post_code'=>'string|nullable',
-            'email'=>'string|required'
+            'email'=>'string|required',
+            'total'=>'required',
+            'shipping'=>'required',
         ]);
         // return $request->all();
 
@@ -60,33 +63,6 @@ class OrderController extends Controller
             request()->session()->flash('error','Cart is Empty !');
             return back();
         }
-        // $cart=Cart::get();
-        // // return $cart;
-        // $cart_index='ORD-'.strtoupper(uniqid());
-        // $sub_total=0;
-        // foreach($cart as $cart_item){
-        //     $sub_total+=$cart_item['amount'];
-        //     $data=array(
-        //         'cart_id'=>$cart_index,
-        //         'user_id'=>$request->user()->id,
-        //         'product_id'=>$cart_item['id'],
-        //         'quantity'=>$cart_item['quantity'],
-        //         'amount'=>$cart_item['amount'],
-        //         'status'=>'new',
-        //         'price'=>$cart_item['price'],
-        //     );
-
-        //     $cart=new Cart();
-        //     $cart->fill($data);
-        //     $cart->save();
-        // }
-
-        // $total_prod=0;
-        // if(session('cart')){
-        //         foreach(session('cart') as $cart_items){
-        //             $total_prod+=$cart_items['quantity'];
-        //         }
-        // }
 
         $order=new Order();
         $order_data=$request->all();
@@ -138,7 +114,85 @@ class OrderController extends Controller
         ];
         Notification::send($users, new StatusNotification($details));
         if(request('payment_method')=='paypal'){
-            return redirect()->route('payment')->with(['id'=>$order->id]);
+            $cart = Cart::where('user_id',auth()->user()->id)->where('order_id',null)->get()->toArray();
+            $data = [];
+
+            // return $cart;
+            $data['items'] = array_map(function ($item) use($cart) {
+                $name=Product::where('id',$item['product_id'])->pluck('title');
+                return [
+                    'name' =>$name ,
+                    'price' => $item['price'],
+                    'desc'  => 'Thank you for using paypal',
+                    'qty' => $item['quantity']
+                ];
+            }, $cart);
+
+            $data['invoice_id'] ='ORD-'.strtoupper(uniqid());
+            Cart::where('user_id', auth()->user()->id)->where('order_id', null)->update(['order_id' => session()->get('id')]);
+            $code_card = $data['invoice_id'];
+            $vnp_Url = "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html";
+            $vnp_TmnCode = "X4M8QF2P";
+            $vnp_HashSecret = "NOUXBHBHJWHLIAKTJRARLMQTDNOGWADH";
+            $vnp_TxnRef = $code_card;
+            $vnp_OrderInfo = 'Thanh toan don hang test';
+            $vnp_OrderType = 'billpayment';
+            $vnp_Amount = $request->total * 100000;
+            $vnp_Locale = 'VN';
+            $vnp_BankCode = 'NCB';
+            $vnp_IpAddr = $_SERVER['REMOTE_ADDR'];
+            $inputData = array(
+                "vnp_Version" => "2.1.0",
+                "vnp_TmnCode" => $vnp_TmnCode,
+                "vnp_Amount" => $vnp_Amount,
+                "vnp_Command" => "pay",
+                "vnp_CreateDate" => date('YmdHis'),
+                "vnp_CurrCode" => "VND",
+                "vnp_IpAddr" => $vnp_IpAddr,
+                "vnp_Locale" => $vnp_Locale,
+                "vnp_OrderInfo" => $vnp_OrderInfo,
+                "vnp_OrderType" => $vnp_OrderType,
+                "vnp_ReturnUrl" => 'http://127.0.0.1:8000/payment/success/' . $order->id,
+                "vnp_TxnRef" => $vnp_TxnRef,
+            );
+
+            if (isset($vnp_BankCode) && $vnp_BankCode != "") {
+                $inputData['vnp_BankCode'] = $vnp_BankCode;
+            }
+            if (isset($vnp_Bill_State) && $vnp_Bill_State != "") {
+                $inputData['vnp_Bill_State'] = $vnp_Bill_State;
+            }
+
+            //var_dump($inputData);
+            ksort($inputData);
+            $query = "";
+            $i = 0;
+            $hashdata = "";
+            foreach ($inputData as $key => $value) {
+                if ($i == 1) {
+                    $hashdata .= '&' . urlencode($key) . "=" . urlencode($value);
+                } else {
+                    $hashdata .= urlencode($key) . "=" . urlencode($value);
+                    $i = 1;
+                }
+                $query .= urlencode($key) . "=" . urlencode($value) . '&';
+
+            }
+
+            $vnp_Url = $vnp_Url . "?" . $query;
+            if (isset($vnp_HashSecret)) {
+                $vnpSecureHash =   hash_hmac('sha512', $hashdata, $vnp_HashSecret);//
+                $vnp_Url .= 'vnp_SecureHash=' . $vnpSecureHash;
+            }
+            $returnData = array('code' => '00'
+            , 'message' => 'success'
+            , 'data' => $vnp_Url);
+            if (isset($_POST['redirect'])) {
+                header('Location: ' . $vnp_Url);
+                die();
+            } else {
+                echo json_encode($returnData);
+            }
         }
         else{
             session()->forget('cart');
@@ -146,7 +200,7 @@ class OrderController extends Controller
         }
         Cart::where('user_id', auth()->user()->id)->where('order_id', null)->update(['order_id' => $order->id]);
 
-        // dd($users);        
+        // dd($users);
         request()->session()->flash('success','Your product successfully placed in order');
         return redirect()->route('home');
     }
@@ -250,17 +304,17 @@ class OrderController extends Controller
             elseif($order->status=="process"){
                 request()->session()->flash('success','Your order is under processing please wait.');
                 return redirect()->route('home');
-    
+
             }
             elseif($order->status=="delivered"){
                 request()->session()->flash('success','Your order is successfully delivered.');
                 return redirect()->route('home');
-    
+
             }
             else{
                 request()->session()->flash('error','Your order canceled. please try again');
                 return redirect()->route('home');
-    
+
             }
         }
         else{
