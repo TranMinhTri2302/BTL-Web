@@ -78,8 +78,8 @@
                                     <option>{{$cat->title}}</option>
                                 @endforeach
                             </select>
-                            <form method="POST" action="{{route('product.search')}}">
-                                @csrf
+                            <form method="get" action="{{route('product.search')}}">
+                            
                                 <input name="search" placeholder="Search Products Here....." type="search">
                                 <button class="btnn" type="submit"><i class="ti-search"></i></button>
                             </form>
